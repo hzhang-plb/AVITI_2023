@@ -15,7 +15,7 @@ sudo apt install trimmomatic
 ```{bash}
 cd /media/volume/sde/trimmed_reads/
 
-# create a file named 'names.txt with library letter codes (e.g. 'B1') in each row
+# create a file named 'names.txt' with library letter codes (e.g. 'B1') in each row
 for i in $(cat ../file_names/names.txt)
 do \
 TrimmomaticPE \
