@@ -1,0 +1,46 @@
+---
+title: "AVITI_02_trimming"
+output: html_document
+date: "2023-08-08"
+---
+# Trim reads
+## 1 Install trimmomatic
+```{bash}
+sudo apt install trimmomatic
+# Version: 0.39+dfsg-2
+```
+[Detailed description](http://www.usadellab.org/cms/?page=trimmomatic)
+
+## 2 Run trimmomatic
+```{bash}
+cd /media/volume/sde/trimmed_reads/
+
+# create a file named 'names.txt with library letter codes (e.g. 'B1') in each row
+for i in $(cat ../file_names/names.txt)
+do \
+TrimmomaticPE \
+../raw_reads/raw_fastq_files/HZ_${i}_R1.fastq.gz \
+../raw_reads/raw_fastq_files/HZ_${i}_R2.fastq.gz \
+trimmed_${i}_forward_paired.fq.gz \
+trimmed_${i}_forward_unpaired.fq.gz \
+trimmed_${i}_reverse_paired.fq.gz \
+trimmed_${i}_reverse_unpaired.fq.gz \
+ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True \
+LEADING:20 \
+TRAILING:20 \
+MINLEN:36
+done
+```
+
+## 3 QC trimmed reads (paired only)
+```{bash}
+cd /media/volume/sde/qc_trimmed_reads
+
+for i in $(cat ../file_names/names.txt)
+do \
+fastqc -o . ../trimmed_reads/trimmed_${i}_forward_paired.fq.gz
+fastqc -o . ../trimmed_reads/trimmed_${i}_reverse_paired.fq.gz
+done
+```
+
+Then run ```multiqc``` on all the trimmed reads
