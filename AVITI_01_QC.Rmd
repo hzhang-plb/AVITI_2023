@@ -1,0 +1,84 @@
+---
+title: "AVITI_01_QC"
+output: html_document
+date: "2023-07-30"
+---
+
+# Raw data QC
+## 1. Install fastqc
+```{bash}
+sudo apt install fastqc
+# Version: 0.11.9+dfsg-5
+```
+[Detailed documentation](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/Help/)
+
+Check package info with the following command:
+```{bash}
+sudo apt show fastqc
+```
+
+## 2. Run fastqc on all raw fastq reads
+```{bash}
+cd /media/volume/sdb/raw_reads/raw_fastq_files/
+
+while read line 
+do fastqc -o /media/volume/sdb/qc_raw_reads/ $line 
+done < '/media/volume/sdb/file_names/qc_raw_files.txt' 
+# The .txt file_name file should contain the file name of one raw .fastq file on each line.
+```
+
+## 3. Run multiqc to summarize raw-reads fastqc outputs
+Here we have installed multiqc via miniconda (see [why we prefer using conda](https://multiqc.info/docs/getting_started/installation/#conda))
+
+### 3.1. Install miniconda on Linux: 
+[Guide](https://conda.io/projects/conda/en/stable/user-guide/install/linux.html)
+
+Download Miniconda3:
+```{bash}
+mkdir home/exouser/miniconda3/
+cd home/exouser/miniconda3/
+wget https://repo.anaconda.com/miniconda/Miniconda3-py311_23.5.2-0-Linux-x86_64.sh
+```
+
+verify downloaded package
+```{bash}
+sha256sum Miniconda3-py311_23.5.2-0-Linux-x86_64.sh 
+```
+
+perform installation (in a new directory home/exouser/miniconda3/installation)
+```{bash}
+bash Miniconda3-latest-Linux-x86_64.sh
+```
+
+*!!! You need to restart bash to make the changes take effect*
+
+Test your installation by checking ```conda list```. A list of installed packages appears if it has been installed correctly. (including python 3.11.4)
+
+Configure your conda channels to work with BioConda: (The order of the four channels is **critical**!!)
+```{bash}
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda config --set channel_priority strict
+```
+
+Next, create a new conda environment named 'py3.11'
+```{bash}
+conda create --name py3.11 python=3.11
+```
+To activate this environment, use ```conda activate py3.11```                       To deactivate an active environment, use ```conda deactivate``` 
+
+### 3.2. Install multiqc via miniconda
+```{bash}
+conda install multiqc
+multiqc --version
+# Version: 1.15       
+```
+
+### 3.3. Run multiqc
+operate in the directory where all the fastqc reports are
+```{bash}
+cd /media/volume/sdb/qc_raw_reads 
+multiqc .
+```
+It finishes instantly! Check the .html files for quality control.
