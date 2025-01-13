@@ -1,0 +1,75 @@
+---
+title: "AVITI_04_transcript_assembly"
+output: html_document
+date: "2023-09-13"
+---
+
+# Transcript assembly
+## 1. StringTie
+[Manual](http://ccb.jhu.edu/software/stringtie/index.shtml?t=manual)
+[Protocol paper](https://www.nature.com/articles/nprot.2016.095)
+
+### 1.1 Install StringTie
+```{bash}
+git clone https://github.com/gpertea/stringtie
+cd stringtie
+make release
+# version: 2.2.1
+
+# Copy the executable file to my PATH
+cp stringtie/stringtie /home/exouser/bin/
+```
+
+### 1.2 Run StringTie - initial assembly
+```{bash}
+# create a file named 'names.txt' with library letter codes (e.g. 'B1') in each row
+for i in $(cat /media/volume/sdb/file_names/names.txt)
+
+do \
+stringtie \
+-p 8 \
+-G /media/volume/sdb/reference_genome/Araport11_GFF3_genes_transposons.current.gff \
+-o stdout_${i}.gtf \
+-l STRG_${i} \
+/media/volume/sdb/aligned_reads_HISAT2/HISAT2_${i}_Aligned.sorted.bam
+
+done
+```
+
+### 1.3 Run StringTie - Merge transcripts from all samples:
+```{bash}
+# First create a text file with the name of each .gtf file generated from the last step in one line.
+for i in Assembly/*.gtf
+do echo $i
+done > mergelist.txt
+
+# Then run ```stringtie --merge``` 
+stringtie --merge \
+-p 8 \
+-G /media/volume/sdb/reference_genome/Araport11_GFF3_genes_transposons.current.gff \
+-o stringtie_merged.gtf \
+mergelist.txt
+```
+
+### 1.4 (optional) Evaluating transcript discovery accuracy by comparing the .gtf files with the reference annotation by gffcompare
+```{bash}
+cd ~/
+git clone https://github.com/gpertea/gffcompare
+cd gffcompare
+make release
+
+cp gffcompare ~/bin/ # add this command to my PATH
+# version: v0.12.8
+```
+
+```{bash}
+cd /media/volume/sdb/test_stringtie/gffcompare
+
+gffcompare ../stringtie_merged.gtf \
+-r /media/volume/sdb/reference_genome/Araport11_GFF3_genes_transposons.current.gff \
+-o merged 
+
+gffcompare ../stringtie_merged_no_ref.gtf \
+-r /media/volume/sdb/reference_genome/Araport11_GFF3_genes_transposons.current.gff \
+-o no_ref_merged 
+```
