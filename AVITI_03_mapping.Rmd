@@ -4,7 +4,7 @@ output: html_document
 date: "2023-08-20"
 ---
 
-# Align trimmed reads to the ## 5.2 HISAT2
+# Align trimmed reads to the reference genome HISAT2
 ## 1. Installation 
 ```{bash}
 git clone https://github.com/DaehwanKimLab/hisat2.git
