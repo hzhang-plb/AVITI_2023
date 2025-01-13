@@ -1,0 +1,36 @@
+---
+title: "AVITI_05_quantification"
+output: html_document
+date: "2023-09-26"
+---
+
+# Generate raw counts of genes using featureCounts (for gene expression analysis)
+### 1. Get featureCounts
+[Downloaded Subread package](https://sourceforge.net/projects/subread/files/subread-2.0.6/)
+```{bash}
+tar zxvf subread-2.0.6-Linux-x86_64.tar.gz
+cd ~/
+cp subread-2.0.6-Linux-x86_64/bin/featureCounts bin/
+# version: featureCounts v2.0.6
+```
+
+### 2. Run featureCounts
+```{bash}
+# First, I need to format the output file from StringTie (stringtie_merged.gtf) by grepping rows that includes a 'gene_id' so that the program can recognize the features.
+cd /media/volume/sdb/stringtie/featureCounts
+grep 'gene_id' ../stringtie_merged.gtf > stringtie_merged_featureCounts.gtf
+```
+
+```{bash}
+# Then, run featureCounts
+# Input: HISAT2 mapped reads (sorted.bam) + StringTie assembled transcript annotation
+# Note that no multi-mapping correction was applied (i.e. reads mapped to multiple loci, which account for about 5% of total aligned reads, are excluded for quantification). This creates less artifact by mis-assigning reads to a wrong gene.
+featureCounts \
+-T 5 \
+-p --countReadPairs \
+-a stringtie_merged_featureCounts.gtf \
+-t exon \
+-g gene_id \
+-o featurecounts_gene_no_MM.txt \
+/media/volume/sdb/aligned_reads_HISAT2/HISAT2_*.sorted.bam
+```
