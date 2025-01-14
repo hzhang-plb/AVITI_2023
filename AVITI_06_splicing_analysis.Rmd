@@ -1,0 +1,42 @@
+---
+title: "AVITI_06_splicing_analysis"
+output: html_document
+date: "2024-04-23"
+---
+
+If only performing splicing analysis, **run AVITI_01-03 first** before proceeding to this script.
+## 1. Install packages
+### 1.1 Install R on Ubuntu Lunix via bash
+```{bash}
+sudo apt install r-base-core
+```
+
+### 1.2 Intsall BiocManager and ASpli
+```{r Install_ASpli2.R}
+# create personal writable library (see instructions: https://stackoverflow.com/questions/32540919/library-is-not-writable)
+dir.create(Sys.getenv("R_LIBS_USER"), recursive = TRUE)  # create personal library
+.libPaths(Sys.getenv("R_LIBS_USER"))  # add to the path
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("ASpli", quietly = TRUE)
+BiocManager::install("GenomicFeatures", quietly = TRUE)
+
+# install an additional required package 
+install.packages("statmod")
+```
+
+## 2. Run ASpli2
+I included necessary libraries and files in each chunk. Therefore, each chunk can be saved as seperate a .R file and run sequencially to generate stepwise results.
+
+### 2.1 Generate a genome annotation file in the TxDb format
+```{r TxDb_generation}
+library(ASpli)
+library(GenomicFeatures)
+
+gtfFileName <- "/media/volume/sdb/reference_genome/Araport11_GTF_genes_transposons.current.gtf"
+genomeTxDb  <- makeTxDbFromGFF(gtfFileName)
+saveDb(genomeTxDb, file="/media/volume/sdb/splicing_analysis/ASpli/reference/Araport11_GTF_genes_transposons.sqlite")
+```
+
+### 2.2
