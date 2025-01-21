@@ -31,7 +31,7 @@ I included necessary libraries and files in each chunk. Therefore, each chunk ca
 
 ### 2.1 Bin the genome
 ```{r genomic feature generation}
-library(ASpli)
+library(ASpli) # version 2.14.0
 library(GenomicFeatures)
 
 gtfFileName <- "/media/volume/sdb/reference_genome/Araport11_GTF_genes_transposons.current.gtf"
