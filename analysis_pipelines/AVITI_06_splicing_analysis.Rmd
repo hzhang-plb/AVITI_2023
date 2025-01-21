@@ -1,0 +1,153 @@
+---
+title: "AVITI_06_splicing_analysis"
+output: html_document
+date: "2024-04-23"
+---
+
+If only performing splicing analysis, **run AVITI_01-03 first** before proceeding to this script.
+## 1. Install packages
+### 1.1 Install R on Ubuntu Lunix via bash
+```{bash}
+sudo apt install r-base-core
+```
+
+### 1.2 Intsall BiocManager and ASpli
+```{r Install_ASpli2.R}
+# create personal writable library (see instructions: https://stackoverflow.com/questions/32540919/library-is-not-writable)
+dir.create(Sys.getenv("R_LIBS_USER"), recursive = TRUE)  # create personal library
+.libPaths(Sys.getenv("R_LIBS_USER"))  # add to the path
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("ASpli", quietly = TRUE)
+BiocManager::install("GenomicFeatures", quietly = TRUE)
+
+# install an additional required package 
+install.packages("statmod")
+```
+
+## 2. Run ASpli2
+I included necessary libraries and files in each chunk. Therefore, each chunk can be saved as seperate a .R file and run sequencially to generate stepwise results.
+
+### 2.1 Bin the genome
+```{r genomic feature generation}
+library(ASpli)
+library(GenomicFeatures)
+
+gtfFileName <- "/media/volume/sdb/reference_genome/Araport11_GTF_genes_transposons.current.gtf"
+genomeTxDb  <- makeTxDbFromGFF(gtfFileName)
+# Genomic feature extraction:
+features <- binGenome(genomeTxDb)
+
+save(features, file="/media/volume/sdb/splicing_analysis/ASpli/master_analysis/genomic_features.Rdata")
+```
+
+### 2.2 Count reads
+```{r read counting}
+load("/media/volume/sdb/splicing_analysis/ASpli/testRun/genomic_features.Rdata")
+# this includes the binned genome saved in 'feature'
+
+BAMFiles <- c("/media/volume/sdb/aligned_reads_HISAT2/HISAT2_A1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_A2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_A3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_B1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_B2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_B3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_C1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_C2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_C3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_D1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_D2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_D3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_E1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_E2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_E3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_F1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_F2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_F3_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_G1_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_G2_Aligned.sorted.bam",
+              "/media/volume/sdb/aligned_reads_HISAT2/HISAT2_G3_Aligned.sorted.bam") # change the file paths
+targets <- data.frame(row.names = paste0('Sample',c(1:length(BAMFiles))),
+                      bam = BAMFiles,
+                      genotype = c('col','col','col',
+                                   'prp19a','prp19a','prp19a',
+                                   'prp19b','prp19b','prp19b',
+                                   'prp19a.prp19b','prp19a.prp19b','prp19a.prp19b',
+                                   'xct','xct','xct',
+                                   'xct.prp19a','xct.prp19a','xct.prp19a',
+                                   'xct.prp19b','xct.prp19b','xct.prp19b'), # one genotype name per .bam file
+                      stringsAsFactors = FALSE)
+
+# Read counting against annotated features:
+gbcounts <- gbCounts(features=features, targets=targets,
+                     minReadLength = 36, maxISize = 12000) # min reads are 36 bp after trimming; max intron is < 12,000 kb in A.thaliana genome
+
+# Junction-based de-novo counting and splicing signal estimation:
+asd <- jCounts(counts = gbcounts, features = features, minReadLength = 36)
+
+save(gbcounts, asd,
+     file = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_count.Rdata")
+```
+
+### 2.3 Differential signals
+```{r differential AS signal generation}
+# load count data, including gbcounts and asd
+load("/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_count.Rdata")
+
+# Differential gene expression and bin usage signal estimation:
+gb <- gbDUreport(gbcounts, contrast = c(-1,0,0,1,0,0,0)) # assign numbers depends on which two genotypes are you comparing against
+
+# Differential junction usage analysis:
+jdur <- jDUreport(asd, contrast = c(-1,0,0,1,0,0,0))
+
+save(gb, jdur,
+     file = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_DS_CvP.Rdata")
+```
+
+### 2.4 Generate reports
+```{r Integrative reports}
+# Load Genomic features from previously generated file
+load("/media/volume/sdb/splicing_analysis/ASpli/testRun/genomic_features.Rdata")
+
+# Load count data
+load("/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_count.Rdata")
+
+# Load DS data
+load("/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_DS_CvP.Rdata")
+
+# load merged bam files
+mBAMs <- data.frame(bam = c("/media/volume/sdb/aligned_reads_HISAT2/Amerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Bmerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Cmerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Dmerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Emerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Fmerged.sorted.bam",
+                            "/media/volume/sdb/aligned_reads_HISAT2/Gmerged.sorted.bam"),
+                    condition = c("col",
+                                  'prp19a',
+                                  'prp19b',
+                                  'prp19a.prp19b',
+                                  "xct",
+                                  'xct.prp19a',
+                                  'xct.prp19b'))
+
+# Bin and junction signal integration:
+sr <- splicingReport(gb, jdur, counts = gbcounts)
+# Summary of integration of splicing signals along genomic-regions.
+is <- integrateSignals(sr, asd)
+
+exportIntegratedSignals(is = is,
+                        sr = sr,
+                        output.dir = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_report_CvP/",
+                        counts = gbcounts,
+                        features = features,
+                        asd = asd,
+                        mergedBams = mBAMs,
+                        makeGraphs = F)
+
+# Save data
+save(sr, is, 
+     file = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_report_CvP.Rdata")
+```
+
