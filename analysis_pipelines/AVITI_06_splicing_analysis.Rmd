@@ -32,7 +32,7 @@ I included necessary libraries and files in each chunk. Therefore, each chunk ca
 ### 2.1 Bin the genome
 ```{r genomic feature generation}
 library(ASpli) # version 2.14.0
-library(GenomicFeatures)
+library(GenomicFeatures) # version 1.56.0
 
 gtfFileName <- "/media/volume/sdb/reference_genome/Araport11_GTF_genes_transposons.current.gtf"
 genomeTxDb  <- makeTxDbFromGFF(gtfFileName)
@@ -84,7 +84,7 @@ gbcounts <- gbCounts(features=features, targets=targets,
                      minReadLength = 36, maxISize = 12000) # min reads are 36 bp after trimming; max intron is < 12,000 kb in A.thaliana genome
 
 # Junction-based de-novo counting and splicing signal estimation:
-asd <- jCounts(counts = gbcounts, features = features, minReadLength = 36)
+asd <- jCounts(counts = gbcounts, threshold = 5, features = features, minReadLength = 36) # Minimum number of reads supporting junctions used as default=5
 
 save(gbcounts, asd,
      file = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_count.Rdata")
