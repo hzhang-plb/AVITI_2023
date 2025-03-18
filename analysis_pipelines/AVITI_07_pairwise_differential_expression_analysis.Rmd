@@ -1,0 +1,182 @@
+---
+title: "AVITI_07_pairwise_differential_expression_analysis"
+output: html_document
+date: "2025-03-18"
+---
+
+### Useful resources:
+1. [Count Based RNA-seq analysis](https://kasperdanielhansen.github.io/genbioconductor/html/Count_Based_RNAseq.html)
+2. [edgeR: differential analysis of sequence read count data - User’s Guide ](https://bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf)
+3. [differential expression analysis of RNA-Seq experiments using the edgeR quasi-likelihood pipeline](https://doi.org/10.12688/f1000research.8987.2)
+
+# 1. Load libraries
+```{r message=FALSE}
+# BiocManager::install("edgeR")
+# BiocManager::install("vsn")
+library(tidyverse)
+library(edgeR) # v 4.2.2
+```
+
+# 2. Data importing, filtering and normalization
+## 2.1 Load raw RNA-seq count data and genotype data
+```{r loading data}
+# load library id + genotype info
+colData = read.csv(file = "path_to_file/phenodata.csv")
+colData$genotype <- factor(colData$genotype,
+                           levels = c("col",
+                                      "xct",
+                                      "prp19a",
+                                      "prp19b",
+                                      "prp19a_prp19b",
+                                      "xct_prp19a",
+                                      "xct_prp19b"))
+
+# load raw transcript abundance data
+countData=read.table("path_to_file/featurecounts_gene_no_MM.txt",
+                     header=T,
+                     row.names=1,
+                     sep="\t")[,-1:-4]
+
+colnames(countData)[-1] <- colData$id
+
+# replace StringTie gene ID to AGI if gene is annotated
+tmap <- read.csv("path_to_file/merged.stringtie.tmap.csv") 
+tmap <- distinct(.data = tmap, qry_gene_id, .keep_all = TRUE) %>% 
+  dplyr::select(-qry_id) # remove redundant StringTie qry gene ids
+
+countData <- countData %>% 
+  rownames_to_column(var = "qry_gene_id") %>% 
+  left_join(tmap, by = "qry_gene_id") %>% 
+  mutate(ref_gene_id = ifelse(ref_gene_id == "-", qry_gene_id, ref_gene_id)) %>%  # use StringTie id if no AGI exists (possibly a new gene) 
+  mutate(ref_gene_id = ifelse(duplicated(ref_gene_id), qry_gene_id, ref_gene_id)) %>%  # use StringTie id if duplicated AGIs exist; name the second one using StringTie id instead
+  filter(!duplicated(ref_gene_id)) %>%  # removed the 10 genes that still have duplicated id; checked individually that none of them are informative
+  dplyr::select(ref_gene_id, everything(), -qry_gene_id) %>% 
+  column_to_rownames(var = "ref_gene_id")
+```
+
+## 2.2 Filter out data with low counts
+```{r expression filtering}
+keep <- rowSums(countData[,-1] >= 10) >= 3
+countData <- countData[keep,]
+```
+
+## 2.3 Normalization
+```{r Create DGE data}
+# create a numeric matrix of our count data to serve as an input to DGElist.
+Data.matrix <- countData %>% 
+  dplyr::select(-"Length") %>% 
+  as.matrix()
+
+DGE.data <- DGEList(counts = Data.matrix, 
+                    group = colData$genotype,
+                    genes = countData[, 1, drop = FALSE])
+
+# normalize the data in our DGElist object using the Trimmed mean of M-values/TMM method
+DGE.data <- calcNormFactors(DGE.data, method = "TMM")
+```
+
+# 3. Pairwise DE analysis
+## 3.1 Explore data
+```{r}
+plotMDS(DGE.data, dim.plot = c(1,2))
+# examine the samples for outliers
+```
+
+## 3.2 Build design matrix
+```{r design table}
+design <- model.matrix(~0+DGE.data$samples$group)
+# here, the 0+ in the model formula is an instruction to include a column for each group.
+colnames(design) <- levels(DGE.data$samples$group)
+design
+```
+
+## 3.5 Determine differentially expressed genes
+```{r DE analysis - Differential expression}
+# use glmQLFit function
+# compared to likelihood ratio test, Quasi-likelihood F-test provides more rigorous type I error rate control 
+fit <- glmQLFit(DGE.data, design, robust = TRUE)
+qlf <- glmTreat(fit, 
+                contrast = c(-1, 1, 0, 0, 0, 0, 0), # adjust the contrast for the pairwise comparison (eg. xct-col)
+                lfc = log2(1.2))  # fold change>1.2
+summary(decideTests(qlf, adjust.method = "BH", p.value = 0.05))  # p.adjusted<0.05
+
+plotMD(qlf) # plot log-fold change against log-counts per million, with DE genes highlighted
+```
+
+## 3.6 Save DEG list
+```{r save DEG list}
+result <- decideTests(qlf, adjust.method = "BH", p.value = 0.05) %>% as.data.frame()
+colnames(result) <- "change"
+
+DE_genes <- topTags(qlf, n = sum(result$change != 0))$table %>% 
+  rownames_to_column(var = "AGI")
+write.csv(DE_genes, "path_to_file/DEG_xct_vs_col.csv")
+```
+
+# 4. PC analysis
+## 4.1 Generate log transformed TMM 
+```{r TMM Data}
+# log2 transformed count data for downstream processing
+# do not filtered for gene significance yet
+TMM_DATA <- cpm(DGE.data, log = T) %>%
+  data.frame() %>%
+  rownames_to_column(var = "AGI")
+```
+
+## 4.2 Calculate variance explained
+```{r}
+TMM_matrix <- TMM_DATA %>% 
+  column_to_rownames(var="AGI") %>% 
+  t()
+pca <- prcomp(TMM_matrix)
+
+library(factoextra)
+fviz_eig(pca, 
+         addlabels = T, 
+         hjust = .5, 
+         barfill = "grey",barcolor = "grey",
+         geom = "bar", 
+         xlab = "principal components")
+
+PCA_data <- cbind(colData, pca$x)
+PCA_data$genotype <- factor(PCA_data$genotype,
+                            levels = c("col",
+                                        "prp19a",
+                                        "prp19b",
+                                        "prp19a_prp19b",
+                                        "xct",
+                                        "xct_prp19a",
+                                        "xct_prp19b"))
+```
+
+## 4.3 Plot data
+```{r PCA plots}
+mytheme <- theme_bw() +
+  theme(text = element_text(size = 12)) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, face = 1)) + 
+  theme(axis.text.y = element_text(face = 1)) + 
+  theme(legend.text = element_text(hjust = 0)) +
+  theme(axis.line = element_line(colour = "black"))
+
+# RColorBrewer::brewer.pal(name = "Dark2", n=8)
+my_color <- c("#1B9E77", "#7570B3", "#E7298A", "#D95F02", "#666666", "#E6AB02", "#A6761D")
+
+PCA_plot1 <- PCA_data %>% 
+  ggplot(mapping = aes(x=PC1, y=PC2, color=genotype)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = my_color,  
+                     name = "Genotype",
+                     labels = expression("Col-0",
+                                        italic("prp19a-1"),
+                                        italic("prp19b-1"),
+                                        italic("prp19a-1 prp19b-1"),
+                                        italic("xct-2"),
+                                        italic("prp19a-1 xct-2"),
+                                        italic("prp19b-1 xct-2"))) +
+  labs(title = "PCA for all genes", 
+       x="PC1: 40.5% variance",
+       y="PC2: 21.5% variance") +
+  mytheme
+
+PCA_plot1
+```
