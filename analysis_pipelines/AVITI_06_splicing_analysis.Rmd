@@ -151,3 +151,52 @@ save(sr, is,
      file = "/media/volume/sdb/splicing_analysis/ASpli/master_analysis/ASpli_report_CvP.Rdata")
 ```
 
+## 3. Re-classify splicing events
+### 3.1 Load differential splicing event and genome annotation data
+```{r load data}
+DS_events <- read.csv("path_to_file")
+
+load("reference_data/genomic_features.Rdata")  # this contains a TxDb object created from Araport11_GTF_genes_transposons, see 2.1 for details
+
+junctions <- features@junctions %>% 
+  as.data.frame() %>% 
+  dplyr::select(seqnames, start, end, strand, locus) %>% 
+  mutate(Region =  paste0(seqnames, ":", start, "-", end),
+         start = paste(seqnames, start, sep = ":"),
+         end = paste(seqnames, end, sep = ":"))
+rm(features)
+```
+
+### 3.2 Classify splicing events
+```{r Classification}
+all_DS_J <- all_DS[all_DS$`Bin.Evidence`==0,] # No need to re-classify annotated bin-signal-based events
+all_DS_J <- all_DS_J %>% 
+  separate(Region, into = c("seqnames", "location"), sep = ":", remove = F) %>% 
+  separate(location, into = c("start", "end"), sep = "-") %>% 
+  mutate(start = paste(seqnames, start, sep = ":"),
+         end = paste(seqnames, end, sep = ":")) %>% 
+  mutate(Event_new = ifelse(Region %in% junctions$Region, "IR",
+                            ifelse(start %in% junctions$start, "Alt3ss",
+                                   ifelse(end %in% junctions$end, "Alt5ss", "Unclassified")))) %>% # still need to correct Alt 3'ss and 5'ss assignment by strand info, see below
+  dplyr::select(Locus, Region, genotype, Event_new)
+
+all_DS <- distinct(junctions[,c("strand", "locus")]) %>% 
+  right_join(all_DS_J, by = c("locus" = "Locus")) %>% 
+  mutate(Event_new = ifelse(!str_detect(Event_new, "Alt"), Event_new,
+                            ifelse(strand == "+", Event_new,
+                                   ifelse(Event_new == "Alt5ss", "Alt3ss", "Alt5ss")))) %>% # correct Alt 3'ss and 5'ss assignment by strand info
+  right_join(all_DS, by = c("Region", "genotype")) %>% 
+  mutate(Event_new = ifelse(is.na(Event_new), Event, Event_new)) %>%
+  mutate(Event_new = str_remove(Event_new, "\\*")) 
+
+all_DS$genotype <- factor(all_DS$genotype,
+                          levels = c("prp19a",
+                                     "prp19b",
+                                     "prp19a prp19b",
+                                     "xct",
+                                     "xct prp19a",
+                                     "xct prp19b"))
+
+write.csv(all_DS, "path-to-file/all_DS_re_classified.csv")
+```
+
