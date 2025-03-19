@@ -7,7 +7,7 @@ date: "2025-03-19"
 # 1. Load package
 ```{r}
 library(tidyverse)
-library(Biostrings)
+library(Biostrings) #(v 2.72.1)
 ```
 
 # 2. Extract DNA sequence from promoter region
