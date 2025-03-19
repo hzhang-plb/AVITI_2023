@@ -1,0 +1,310 @@
+---
+title: "AVITI_08_WGCNA"
+output: html_document
+date: "2025-03-19"
+---
+
+# 1. Load packages
+```{r, warning=FALSE}
+# BiocManager::install("edgeR")
+# BiocManager::install("vsn")
+library(tidyverse)
+library(ggplot2)
+library(edgeR)
+library(WGCNA)
+```
+
+# 2. Import, filter and normalize count data 
+## 2.1 Load raw RNA-seq count data and genotype data
+```{r loading data}
+# load library id + genotype info
+colData <- read.csv(file = "path_to_file/phenodata.csv")
+
+# load raw transcript abundance data
+countData=read.table("featurecounts_gene_no_MM.txt",
+                     header=T,
+                     row.names=1,
+                     sep="\t")[,-1:-4]
+
+colnames(countData)[-1] <- colData$id
+
+# replace StringTie gene ID to AGI if gene is annotated
+tmap <- read.csv("~/Documents/LAB/HarmerLab/PRP19_RNAseq/Data_Analysis/DE_analysis/StringTie_output/merged.stringtie.tmap.csv") 
+tmap <- distinct(.data = tmap, qry_gene_id, .keep_all = TRUE) %>% 
+  dplyr::select(-qry_id) # remove redundant StringTie qry gene ids
+
+countData <- countData %>% 
+  rownames_to_column(var = "qry_gene_id") %>% 
+  left_join(tmap, by = "qry_gene_id") %>% 
+  mutate(ref_gene_id = ifelse(ref_gene_id == "-", qry_gene_id, ref_gene_id)) %>%  # use StringTie id if no AGI exists (possibly a new gene) 
+  mutate(ref_gene_id = ifelse(duplicated(ref_gene_id), qry_gene_id, ref_gene_id)) %>%  # use StringTie id if duplicated AGIs exist; name the second one using StringTie id instead
+  filter(!duplicated(ref_gene_id)) %>%  # removed the 10 genes that still have duplicated id; checked individually that none of them are informative
+  dplyr::select(ref_gene_id, everything(), -qry_gene_id) %>% 
+  column_to_rownames(var = "ref_gene_id")
+```
+
+## 2.2 Filter out data with low counts
+```{r expression filtering}
+keep <- rowSums(countData[,-1] >= 10) >= 3
+countData <- countData[keep,]
+```
+
+## 2.3 Normalization
+```{r}
+# create a numeric matrix of our count data to serve as an input to DGElist.
+Data.matrix <- countData %>% 
+  dplyr::select(-"Length") %>% 
+  as.matrix()
+DGE.data <- DGEList(counts = Data.matrix, group = colData$genotype)
+
+# normalize the data in our DGElist object using the TMM method form EdgeR package
+DGE.data <- calcNormFactors(DGE.data, method = "TMM")
+
+# log2 transformation of count data for downstream processing
+TMM_DATA <- cpm(DGE.data, log = T) %>%
+  data.frame() %>%
+  rownames_to_column(var = "AGI")
+
+# check the distribution of normalized reads
+TMM_DATA %>% 
+  pivot_longer(2:22, names_to = "library", values_to = "value") %>% 
+  ggplot(aes(x=value, color=library)) + 
+  geom_density() +
+  labs(x = "log2(TMM)", title = ">10 reads in at least 3 libraries") + # or unfiltered
+  theme_bw()
+```
+
+## 2.4 Variance filtering
+### 2.4.1 Calculate coefficient variance (CV or relative standard deviation)
+```{r calculate CV}
+# Calculating Coefficient of variation function
+calc.cv <- function(x, na.rm=TRUE) { 
+  if(na.rm==TRUE) x <- na.omit(x)
+  result <- sd(x) / mean(x) 
+  result <- abs(result) 
+  return(result)
+}
+
+# Calculate the Variance of each Gene across all of our samples
+# Calculate mean TMM value for each genotype first (so variation within biological replicates are not considered)
+CV_TMM_Data_mean <- TMM_DATA %>%
+  pivot_longer(2:22, names_to = "library", values_to = "TMM") %>% 
+  mutate(genotype = str_remove(library, '[0-9]')) %>% 
+  aggregate(TMM ~ AGI + genotype, FUN = mean) %>%  # calculate mean TMM across 3 biological reps of each genotype
+  pivot_wider(names_from = "genotype", values_from = "TMM") %>%
+  rowwise() %>%   # perform row-wise aggregations.
+  mutate(cv = calc.cv(c_across(-AGI))) %>%
+  ungroup() %>%
+  dplyr::select(AGI, cv, everything())
+```
+
+### 2.4.2 Filter by CV
+```{r filter by CV}
+# We then filter the data frame to contain the top 75% most variable genes
+CV_filtered_gene <- CV_TMM_Data_mean %>%
+  slice_max(order_by = cv, prop = 0.75) %>%
+  dplyr::select(AGI)
+
+CV_filtered_TMM_Data <- TMM_DATA %>%
+  filter(AGI %in% CV_filtered_gene$AGI)
+# 15193 genes are selected
+```
+
+# 3. Module detection
+### 3.1.1 Choose soft threshold parameter
+```{r soft threshold}
+datExpr <- CV_filtered_TMM_Data %>% 
+  column_to_rownames(var="AGI") %>% 
+  t()
+
+# create a set of soft threshold parameters
+powers = c(c(1:20), seq(from = 22, to=30, by=2))
+
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5, blockSize = ncol(datExpr), networkType = "signed hybrid") 
+
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], 
+     -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",
+     ylab="Scale Free Topology Model Fit,signed R^2",
+     type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], 
+     -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers, cex=cex1, col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.90,col="red")
+abline(h=0.80,col="pink")
+
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], 
+     sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",
+     ylab="Mean Connectivity", 
+     type="n",
+     main = paste("Mean connectivity")) 
+text(sft$fitIndices[,1], 
+     sft$fitIndices[,5], 
+     labels=powers, cex=cex1,col="red")
+
+# choose power = 10 for module detection
+```
+
+### 3.1.2 Check outliers
+```{r check outlier sampels}
+# cluster the samples by clusters
+sampleTree <- hclust(dist(datExpr), method = "average")
+
+par(cex = 1.5)
+par(mar = c(0, 5, 2, 0))
+plot(sampleTree,
+  main = "Sample clustering to detect outliers",
+  sub = "",
+  xlab = "",
+  cex.lab = 1.5,
+  cex.axis = 1.5,
+  cex.main = 2)
+# no outlier sample/library detected
+```
+
+## 3.2 Step by step method for module detection
+### 3.2.1 Set soft power threshold and seed
+```{r set power}
+# set power
+power = 10
+# set seed
+set.seed(523)
+```
+
+### 3.2.2 Build adjacency matrix
+```{r adjacency matrix}
+# Adjacency matrix
+adjacency <- adjacency(datExpr,
+                       power = power,
+                       type = "signed hybrid")
+# Turn adjacency into topological overlap
+TOM <- TOMsimilarity(adjacency,
+                     TOMType = "signed Nowick")
+# let's free up some space
+rm(adjacency)
+```
+
+### 3.2.3 Hierarchical clustering
+```{r hierarchical clustering}
+dissTOM <- 1 - TOM
+colnames(dissTOM) <- colnames(datExpr)
+rownames(dissTOM) <- colnames(datExpr)
+
+rm(TOM)
+
+# Call the hierarchical clustering function
+geneTree = hclust(as.dist(dissTOM),
+                  method = "average")
+# Plot the resulting clustering tree (dendrogram)
+plot(
+  geneTree,
+  xlab = "",
+  sub = "",
+  main = "Gene clustering on TOM-based dissimilarity",
+  labels = FALSE,
+  hang = 0.04
+)
+```
+
+### 3.2.4 Assign color keys to modules
+```{r step-by-step module construction - module colors}
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(
+  dendro = geneTree,
+  distM = dissTOM,
+  deepSplit = 2,
+  pamRespectsDendro = FALSE,
+  minClusterSize = 30  
+  )
+table(dynamicMods) # check number of genes in each module
+
+# Convert numeric labels into colors
+dynamicColors <- labels2colors(dynamicMods)
+
+# Plot the dendrogram and colors underneath
+plotDendroAndColors(
+  geneTree,
+  dynamicColors,
+  "Dynamic Tree Cut",
+  dendroLabels = FALSE,
+  hang = 0.03,
+  addGuide = TRUE,
+  guideHang = 0.05,
+  main = "Gene dendrogram and module colors"
+)
+```
+
+### 3.2.5 Merge similar modules
+```{r step-by-step module construction - merge similar modules}
+# Determining modules whose expression profiles are very similar
+# Calculate eigengenes
+MEList <- moduleEigengenes(datExpr, colors = dynamicColors)
+MEs <- MEList$eigengenes
+# Calculate dissimilarity of module eigengenes
+MEDiss <- 1 - cor(MEs)
+# Cluster module eigengenes
+METree <- hclust(as.dist(MEDiss), method = "average")
+# Plot Result
+# We choose a height cut of 0.2, corresponding to correlation of 0.8, to merge
+MEDissThres <- 0.2
+
+# Check tree cut
+plot(METree,
+     main = "Clustering of module eigengenes",
+     xlab = "",
+     sub = "")
+abline(h = MEDissThres, col = "red")
+```
+
+```{r step-by-step module construction - merge similar modules}
+# Merging modules
+# Call an automatic merging function
+merge = mergeCloseModules(datExpr,
+                          dynamicColors,
+                          cutHeight = MEDissThres,
+                          verbose = 3)
+# The merged module colors
+mergedColors = merge$colors
+
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs
+
+# Dendrogram after merging
+plotDendroAndColors(
+  geneTree,
+  cbind(dynamicColors, mergedColors),
+  c("Unmerged Tree", " Merged (Cut=0.2)"),
+  dendroLabels = FALSE,
+  hang = 0.03,
+  addGuide = TRUE,
+  guideHang = 0.05
+)
+table(merge$colors)
+
+# Rename to moduleColors
+moduleColors <- mergedColors
+# Construct numerical labels corresponding to the colors
+colorOrder <- c("grey", standardColors(dim(table(dynamicColors)))) # grey is the ungrouped cluster so put in the front
+
+moduleLabels <- match(moduleColors, colorOrder) - 1
+MEs <- mergedMEs
+```
+
+### 3.2.6 Save data
+```{r}
+save(
+   datExpr,
+   MEs,
+   moduleLabels,
+   moduleColors,
+   geneTree,
+   file = "path_to_file/TMM_CV75_man_modules.RData"
+ )
+```
