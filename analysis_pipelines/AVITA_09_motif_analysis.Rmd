@@ -1,0 +1,76 @@
+---
+title: "AVITA_09_motif_analysis"
+output: html_document
+date: "2025-03-19"
+---
+
+# 1. Load package
+```{r}
+library(tidyverse)
+library(Biostrings)
+```
+
+# 2. Extract DNA sequence from promoter region
+## 2.1 Load annotation file
+The promoter sequence can be directly downloaded from TAIR [Araport11_upstream_500_translation_start_20220914.gz](https://www.arabidopsis.org/download/Genes/Araport11_genome_release/Araport11_blastsets/Upstream/Araport11_upstream_500_translation_start_20220914.gz).
+```{r}
+seq_upstream_500 <- readDNAStringSet("path_to_file/Araport11_upstream_500_translation_start_20220914.gz")
+
+names(seq_upstream_500) <- str_remove(names(seq_upstream_500), "\\..*") # format gene ID
+seq_upstream_500 <- seq_upstream_500[!duplicated(names(seq_upstream_500))] # keep the first conanical isoform for each gene for determining translation start site
+```
+
+## 2.2 Get sequences for all expressed genes (use as background)
+```{r all seq}
+expressed_genes <- read_tsv("path_to_file/all_expressed_genes.txt")
+
+all_seq <- seq_upstream_500[names(seq_upstream_500) %in% expressed_genes$AGI]
+head(all_seq)
+
+write.fasta(sequences = as.list(data.frame(all_seq)$all_seq), 
+            names = names(all_seq), 
+            file.out = "path_to_file/all_seq_ATG_1000.fasta")
+```
+
+## 2.3 Get sequence for genes of interest
+```{r coral2}
+# here I use module coral2 genes as an example
+M_coral2_genes <- read_csv("path_to_file/M10.coral2.csv") %>% 
+  dplyr::select(-1)
+
+coral2_seq <- seq_upstream_500[names(seq_upstream_500) %in% M_coral2_genes$AGI]
+head(coral2_seq)
+
+write.fasta(sequences = as.list(data.frame(coral2_seq)$coral2_seq), 
+            names = names(coral2_seq), 
+            file.out = "path_to_file/coral2_seq_ATG_1000.fasta")
+```
+
+# 3. Run SEA/Simple Enrichment Analysis - Example
+## 3.1 Download software: 
+[MEME](https://meme-suite.org/doc/download.html)
+
+## 3.2 Run the following commands to compile, test and install meme:
+```{bash}
+tar zxf meme-5.5.7.tar.gz
+cd meme-5.5.7
+./configure --prefix=$HOME/meme --enable-build-libxml2 --enable-build-libxslt        
+make
+make test
+make install
+```
+
+## 3.3 Edit shell configuration file 
+```{bash}
+export PATH=$HOME/meme/bin:$HOME/meme/libexec/meme-5.5.7:$PATH
+```
+
+## 3.4. Run SEA
+```{bash}
+sea -o path_to_out.dir/ \
+--n path_to_file/all_seq_ATG_500.fasta \
+--p path_to_file/coral2_seq_ATG_500.fasta \
+--m path_to_file/JASPAR2022_CORE_plants_non-redundant_v2.meme
+
+# The motif database contains 656 motifs, between 5 and 30 in width (average width 12.9), all derived from published collections of experimentally defined transcription factor binding sites for eukaryotes.
+```
